@@ -483,7 +483,7 @@ tr.row-auto td{background:#F7F3FD;}
     <button class="btn-primary" type="button" id="lock-entrar">Entrar</button>
     <div class="lock-erro" id="lock-erro"></div>
     <noscript><div class="lock-erro">Este visualizador não roda o painel. Abra o arquivo no Chrome ou no Safari.</div></noscript>
-    <div id="lock-versao" style="font-size:10px; color:var(--muted); margin-top:6px;">versão 03/11 07h30</div>
+    <div id="lock-versao" style="font-size:10px; color:var(--muted); margin-top:6px;">versão 03/11 08h15</div>
   </form>
 </div>
 <script>
@@ -604,7 +604,7 @@ document.addEventListener('click', function(e){
       <div class="card">
         <div class="head red">Controle de Gastos</div>
         <table class="budget-table">
-          <thead><tr><th>Categorias</th><th>Bom</th><th>Cuidado</th><th>Absurdo!</th><th></th></tr></thead>
+          <thead><tr><th>Categorias</th><th>Máximo no mês</th><th></th></tr></thead>
           <tbody id="budget-body"></tbody>
         </table>
         <button class="add-btn" data-add="budgets">+ adicionar categoria</button>
@@ -676,7 +676,7 @@ document.addEventListener('click', function(e){
       </div>
       <div class="saude-bar" id="saude-bar"><div class="fill" id="saude-fill"></div><div class="mark" id="saude-mark"></div></div>
       <div class="saude-barlbl" id="saude-barlbl"></div>
-      <div class="saude-foot">Valores apurados com base no orçamento <b>"Bom"</b> do Controle de Gastos.<br><button class="hlink" id="saude-ajustar">Ajustar planejamento</button></div>
+      <div class="saude-foot">Planejado = soma dos valores máximos do Controle de Gastos.<br><button class="hlink" id="saude-ajustar">Ajustar planejamento</button></div>
     </div>
   </div>
 
@@ -699,7 +699,7 @@ document.addEventListener('click', function(e){
     <div class="kpi">
       <div class="label">Categorias em alerta</div>
       <div class="value" id="k-alertas"></div>
-      <div class="sub warn">acima da faixa "Cuidado"</div>
+      <div class="sub warn">acima do máximo</div>
     </div>
     <div class="kpi">
       <div class="label">Índice geral de redução</div>
@@ -717,7 +717,7 @@ document.addEventListener('click', function(e){
     <div>
       <div class="panel">
         <h3>Acompanhamento de gasto por categoria</h3>
-        <p class="desc">valor gasto em <span class="mes-label">Setembro</span> em cada categoria, frente ao teto "Absurdo!" definido no orçamento</p>
+        <p class="desc">valor gasto em <span class="mes-label">Setembro</span> em cada categoria, frente ao máximo definido no Controle de Gastos</p>
         <div id="track-body"></div>
       </div>
       <div class="panel">
@@ -730,7 +730,7 @@ document.addEventListener('click', function(e){
     <div>
       <div class="panel">
         <h3>Índice de redução de gastos</h3>
-        <p class="desc">o quanto cada categoria precisaria cair para voltar à faixa "Bom"</p>
+        <p class="desc">o quanto cada categoria precisaria cair para voltar ao máximo</p>
         <div id="reduc-body"></div>
       </div>
       <div class="panel">
@@ -1102,15 +1102,15 @@ let state = {
     }
   },
   budgets: [
-    {categoria:'Transporte facul/trab', bom:50, cuidado:80, absurdo:100},
-    {categoria:'Uber', bom:50, cuidado:80, absurdo:100},
-    {categoria:'Comida', bom:100, cuidado:150, absurdo:200},
-    {categoria:'Cosmético', bom:50, cuidado:80, absurdo:120},
-    {categoria:'Rolê', bom:100, cuidado:120, absurdo:180},
-    {categoria:'Presentes', bom:50, cuidado:80, absurdo:100},
-    {categoria:'Roupa', bom:100, cuidado:180, absurdo:250},
-    {categoria:'Variáveis', bom:30, cuidado:50, absurdo:80},
-    {categoria:'Contas', bom:80, cuidado:100, absurdo:150},
+    {categoria:'Transporte facul/trab', limite:100},
+    {categoria:'Uber', limite:100},
+    {categoria:'Comida', limite:200},
+    {categoria:'Cosmético', limite:120},
+    {categoria:'Rolê', limite:180},
+    {categoria:'Presentes', limite:100},
+    {categoria:'Roupa', limite:250},
+    {categoria:'Variáveis', limite:80},
+    {categoria:'Contas', limite:150},
   ],
   fornecedores: [],
   carteira: [
@@ -1288,9 +1288,7 @@ function renderBudgets(){
   editavel('budget-body').innerHTML = state.budgets.map((b,i)=>`
     <tr>
       <td>${catInput(b.categoria,'budgets',i)}</td>
-      <td><input type="number" step="1" value="${b.bom||0}" data-arr="budgets" data-i="${i}" data-f="bom"></td>
-      <td><input type="number" step="1" value="${b.cuidado||0}" data-arr="budgets" data-i="${i}" data-f="cuidado"></td>
-      <td><input type="number" step="1" value="${b.absurdo||0}" data-arr="budgets" data-i="${i}" data-f="absurdo"></td>
+      <td><input type="number" step="1" min="0" value="${b.limite||0}" data-arr="budgets" data-i="${i}" data-f="limite" placeholder="0 = sem máximo"></td>
       <td><button class="del-btn" data-del="budgets" data-i="${i}">✕</button></td>
     </tr>`).join('');
 }
@@ -1370,9 +1368,8 @@ function renderAnalise(catMap, saidas, totFixos, totGastos, totCartao, totEntrad
   let nAlertas=0;
   let reducList=[];
   state.budgets.forEach(b=>{
-    const g = catMap[b.categoria]||0;
-    if(g>b.absurdo || g>b.cuidado) nAlertas++;
-    if(g>b.bom){ reducList.push({categoria:b.categoria, gasto:g, bom:b.bom, cuidado:b.cuidado, absurdo:b.absurdo, idx:((g-b.bom)/(b.bom||1))*100}); }
+    const g = catMap[b.categoria]||0, lim = limiteDe(b);
+    if(lim>0 && g>lim){ nAlertas++; reducList.push({categoria:b.categoria, gasto:g, limite:lim, idx:((g-lim)/lim)*100}); }
   });
   reducList.sort((a,b)=>b.idx-a.idx);
   document.getElementById('k-alertas').textContent = nAlertas;
@@ -1380,7 +1377,7 @@ function renderAnalise(catMap, saidas, totFixos, totGastos, totCartao, totEntrad
   const indiceGeral = reducList.length ? (reducList.reduce((s,r)=>s+r.idx,0)/reducList.length) : 0;
   document.getElementById('k-indice').textContent = indiceGeral.toFixed(0)+'%';
   const idxSub = document.getElementById('k-indice-sub');
-  if(indiceGeral===0){idxSub.textContent='nenhuma categoria acima do ideal'; idxSub.className='sub good';}
+  if(indiceGeral===0){idxSub.textContent='nenhuma categoria acima do máximo'; idxSub.className='sub good';}
   else if(indiceGeral<40){idxSub.textContent='corte leve recomendado'; idxSub.className='sub warn';}
   else{idxSub.textContent='corte significativo recomendado'; idxSub.className='sub bad';}
 
@@ -1400,13 +1397,14 @@ function renderAnalise(catMap, saidas, totFixos, totGastos, totCartao, totEntrad
 
   const trackCats = state.budgets.map(b=>({...b, gasto:catMap[b.categoria]||0})).sort((a,b)=>b.gasto-a.gasto);
   document.getElementById('track-body').innerHTML = trackCats.map(t=>{
-    const pct = Math.min(100,(t.gasto/(t.absurdo||1))*100);
-    let cls='good'; if(t.gasto>t.absurdo) cls='bad'; else if(t.gasto>t.bom) cls='warn';
+    const lim = limiteDe(t);
+    const pct = lim>0 ? Math.min(100,(t.gasto/lim)*100) : 0;
+    const cls = (lim>0 && t.gasto>lim) ? 'bad' : 'good';
     return `<div class="bar-row">
       <div class="cat"><span class="sw" style="background:${colorForCategory(t.categoria)}"></span>${t.categoria}</div>
       <div class="bar-track2"><div class="bar-fill2" style="width:${pct}%;background:${cls==='good'?'var(--good)':cls==='warn'?'var(--warn)':'var(--bad)'}"></div></div>
       <div class="val">${fmt(t.gasto)}</div>
-      <div class="pct">de ${fmt(t.absurdo)}</div>
+      <div class="pct">${lim>0 ? 'de '+fmt(lim) : 'sem máximo'}</div>
     </div>`;
   }).join('') || `<p style="color:var(--muted)">adicione categorias no Controle de Gastos para acompanhar aqui.</p>`;
 
@@ -1420,11 +1418,11 @@ function renderAnalise(catMap, saidas, totFixos, totGastos, totCartao, totEntrad
 
   const reducBody = document.getElementById('reduc-body');
   if(reducList.length===0){
-    reducBody.innerHTML = `<div class="alert good"><span class="icon">✓</span><div class="body"><b>Nenhuma redução necessária</b><span>todas as categorias estão dentro da faixa "Bom".</span></div></div>`;
+    reducBody.innerHTML = `<div class="alert good"><span class="icon">✓</span><div class="body"><b>Nenhuma redução necessária</b><span>todas as categorias estão dentro do máximo.</span></div></div>`;
   }else{
     reducBody.innerHTML = reducList.map(r=>{
       const capped = Math.min(100, r.idx);
-      let cls='warn'; if(r.gasto>r.absurdo) cls='bad'; else if(r.idx<20) cls='good';
+      const cls='bad';
       return `<div class="reduc-row">
         <div style="font-weight:700">${r.categoria}</div>
         <div class="reduc-track"><div class="reduc-fill" style="width:${capped}%"></div></div>
@@ -1437,8 +1435,8 @@ function renderAnalise(catMap, saidas, totFixos, totGastos, totCartao, totEntrad
   let alerts=[];
   state.budgets.forEach(b=>{
     const g = catMap[b.categoria]||0;
-    if(g>b.absurdo) alerts.push({cls:'bad', icon:'⚠', title:`${b.categoria} passou do limite "Absurdo!"`, desc:`gasto de ${fmt(g)}, ${fmt(g-b.absurdo)} acima do teto de ${fmt(b.absurdo)}.`});
-    else if(g>b.cuidado) alerts.push({cls:'warn', icon:'!', title:`${b.categoria} entrou na faixa "Cuidado"`, desc:`gasto de ${fmt(g)}, entre ${fmt(b.cuidado)} e ${fmt(b.absurdo)}.`});
+    const lim = limiteDe(b);
+    if(lim>0 && g>lim) alerts.push({cls:'bad', icon:'⚠', title:`${b.categoria} passou do máximo`, desc:`gasto de ${fmt(g)}, ${fmt(g-lim)} acima do máximo de ${fmt(lim)}.`});
   });
   if(saldo<0) alerts.unshift({cls:'bad', icon:'⚠', title:'Saldo do mês ficou negativo', desc:`gastos superaram as entradas em ${fmt(Math.abs(saldo))}.`});
   if(pctCredito>=60) alerts.push({cls:'warn', icon:'!', title:'Concentração alta de gastos no crédito', desc:`${pctCredito.toFixed(0)}% do total pago foi no crédito.`});
@@ -1532,8 +1530,7 @@ function renderSaude(){
   const cur = dreDoMes(state.currentMonth);
   if(!cur) return;
   const real = cur.gastos;
-  const planBom = state.budgets.reduce((s,b)=>s+num(b.bom),0);
-  const planCuidado = state.budgets.reduce((s,b)=>s+num(b.cuidado),0);
+  const planBom = state.budgets.reduce((s,b)=>s+limiteDe(b),0);   // soma dos máximos
 
   // se o mês selecionado é o mês de hoje, mostra a marca de "onde deveríamos estar"
   const ehMesAtual = mesDeHoje() === state.currentMonth;
@@ -1544,8 +1541,7 @@ function renderSaude(){
   let cls, msg;
   if(planBom<=0){ cls='neu'; msg='Defina o orçamento no Controle de Gastos para acompanhar.'; }
   else if(cur.saldo<0){ cls='bad'; msg='Gastos superaram as entradas do mês.'; }
-  else if(real>Math.max(planCuidado,planBom)){ cls='bad'; msg='Gastos acima do valor planejado.'; }
-  else if(real>planBom){ cls='warn'; msg='Gastos passaram da meta ideal — atenção.'; }
+  else if(real>planBom){ cls='bad'; msg='Gastos acima do máximo planejado para o mês.'; }
   else { cls='good'; msg='Gastos de acordo com o valor planejado.'; }
 
   document.getElementById('saude-icon').className = 'saude-icon '+cls;
@@ -1604,7 +1600,42 @@ function populateFiltroCategoria(){
   sel.value = prevVal;
 }
 
+/* Controle de Gastos: um único valor máximo por categoria (substitui Bom/Cuidado/Absurdo).
+   Dados antigos: o máximo começa igual ao antigo teto "Absurdo!". 0 = sem máximo. */
+function migrarLimites(){
+  let mudou = false;
+  (state.budgets||[]).forEach(b=>{
+    if(b.limite===undefined || b.limite===null || b.limite===''){
+      b.limite = num(b.absurdo) || num(b.cuidado) || num(b.bom) || 0;
+      mudou = true;
+    }
+  });
+  return mudou;
+}
+function limiteDe(b){ return num(b.limite); }
+
+/* alerta na hora em que uma categoria passa do máximo */
+const _acimaPorMes = {};
+function avisarLimitesNovos(catMap){
+  const mes = state.currentMonth;
+  const acima = new Set(state.budgets.filter(b=>limiteDe(b)>0 && (catMap[b.categoria]||0) > limiteDe(b)).map(b=>b.categoria));
+  const antes = _acimaPorMes[mes];
+  _acimaPorMes[mes] = acima;
+  if(!antes) return;                       // primeira vez que o mês aparece: só registra
+  const ae = document.activeElement;
+  if(ae && ae.dataset && ae.dataset.arr==='budgets') return;   // está ajustando o próprio máximo
+  const novas = [...acima].filter(c=>!antes.has(c));
+  if(novas.length){
+    const b = state.budgets.find(x=>x.categoria===novas[0]);
+    const g = catMap[novas[0]]||0;
+    toast(novas.length===1
+      ? `⚠ ${novas[0]} passou do máximo: ${fmt(g)} de ${fmt(limiteDe(b))} (+${fmt(g-limiteDe(b))})`
+      : `⚠ ${novas.length} categorias passaram do máximo: ${novas.join(', ')}`);
+  }
+}
+
 function renderAll(){
+  if(migrarLimites()) saveState();
   if(provisionarParcelas()) saveState();
   populateMonthSelect();
   populateFiltroCategoria();
@@ -1628,6 +1659,7 @@ function renderAll(){
   }
 
   const catMap = categoryTotals();
+  avisarLimitesNovos(catMap);
   renderCategoriaCard(catMap);
   const saidas = renderSaidas(rf.tot, rg.tot, rc.tot);
   const saldo = totEntradas - (rf.tot+rg.tot+rc.tot);
@@ -1750,7 +1782,7 @@ document.addEventListener('click', e=>{
       gastos:{nome:'', tipo:'Débito', categoria:'', valor:0},
       entradas:{nome:'', valor:0},
       cartao:{nome:'', parcelas:'', tipo:'Débito', categoria:'', valor:0},
-      budgets:{categoria:'Nova categoria', bom:0, cuidado:0, absurdo:0},
+      budgets:{categoria:'Nova categoria', limite:0},
     };
     getArr(add.dataset.add).push(blanks[add.dataset.add]);
     saveState(); renderAll();
