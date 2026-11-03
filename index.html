@@ -156,6 +156,9 @@ input.cat-input{font-weight:700; border-radius:4px; padding:2px 6px;}
 .alert .body span{font-size:10.5px; color:var(--muted);}
 .alert.bad{background:#FCE9EB;} .alert.bad .icon{color:var(--bad);} .alert.bad b{color:#8E1526;}
 .alert.warn{background:#FDF3E1;} .alert.warn .icon{color:var(--warn);} .alert.warn b{color:#8A5A16;}
+.dup-tag{font-size:10.5px; margin-top:3px; padding:2px 6px; border-radius:4px; display:inline-block; line-height:1.3;}
+.dup-tag.forte{background:#E5F5E9; color:#1F5C33;}
+.dup-tag.fraco{background:#FDF3E1; color:#8A5A16;}
 .alert.good{background:#E5F5E9;} .alert.good .icon{color:var(--good);} .alert.good b{color:#1F5C33;}
 .split-bar{display:flex; height:22px; border-radius:5px; overflow:hidden; margin-top:6px;}
 .split-bar span{height:100%;}
@@ -780,7 +783,7 @@ tr.row-auto td{background:#F7F3FD;}
     <h3>Lançamentos identificados</h3>
     <p class="desc">confira, ajuste se precisar, e adicione os selecionados às tabelas do Painel</p>
     <table class="review-table">
-      <thead><tr><th style="width:26px"></th><th>Nome</th><th>Tipo</th><th>Categoria</th><th>Valor</th><th>Destino</th></tr></thead>
+      <thead><tr><th style="width:26px"></th><th>Nome</th><th>Parc.</th><th>Tipo</th><th>Categoria</th><th>Valor</th><th>Destino</th></tr></thead>
       <tbody id="review-body"></tbody>
     </table>
     <div class="review-actions">
@@ -1122,6 +1125,37 @@ function loadState(){
   }
   catch(e){ console.error('erro ao carregar dados salvos', e); }
 }
+/* --- Edição sem perder o foco ---
+   As tabelas são redesenhadas a cada tecla. Se o campo que a pessoa está
+   digitando fica dentro da tabela, recriar o HTML destrói o campo e o foco
+   se perde depois do 1º caractere. Enquanto houver um campo de texto/número
+   em edição, a tabela dele não é redesenhada; ela é atualizada quando o
+   foco sai do campo. Totais e o resto da tela continuam ao vivo. */
+let _redesenhoPendente = false;
+function _editandoEm(el){
+  const a = document.activeElement;
+  if(!a || !el || !el.contains(a)) return false;
+  if(a.tagName==='TEXTAREA') return true;
+  if(a.tagName!=='INPUT') return false;
+  return !['checkbox','radio','button','submit','file'].includes(a.type);
+}
+function editavel(id){
+  const el = document.getElementById(id);
+  if(_editandoEm(el)){
+    _redesenhoPendente = true;
+    return { set innerHTML(v){} };
+  }
+  return el;
+}
+document.addEventListener('focusout', ()=>{
+  setTimeout(()=>{
+    if(!_redesenhoPendente) return;
+    _redesenhoPendente = false;
+    renderAll();
+    if(typeof renderReview==='function' && document.getElementById('review-body')) renderReview();
+  }, 0);
+});
+
 function saveState(){
   const marcar = typeof syncPodeEnviar==='function' && syncPodeEnviar();
   if(marcar) state._atualizadoEm = Date.now();
@@ -1153,7 +1187,7 @@ function catInput(val, arr, i){
 function renderFixos(){
   const data = cm().fixos;
   let shown = 0;
-  document.getElementById('fixos-body').innerHTML = data.map((r,i)=>{
+  editavel('fixos-body').innerHTML = data.map((r,i)=>{
     if(!passaFiltro(r)) return '';
     shown++;
     return `
@@ -1173,7 +1207,7 @@ function renderFixos(){
 function renderGastos(){
   const data = cm().gastos;
   let shown = 0;
-  document.getElementById('gastos-body').innerHTML = data.map((r,i)=>{
+  editavel('gastos-body').innerHTML = data.map((r,i)=>{
     if(!passaFiltro(r)) return '';
     shown++;
     return `
@@ -1191,7 +1225,7 @@ function renderGastos(){
 }
 function renderEntradas(){
   const data = cm().entradas;
-  document.getElementById('entradas-body').innerHTML = data.map((r,i)=>`
+  editavel('entradas-body').innerHTML = data.map((r,i)=>`
     <tr>
       <td><input type="text" value="${r.nome||''}" data-arr="entradas" data-i="${i}" data-f="nome"></td>
       <td class="num"><input type="number" step="0.01" value="${r.valor||0}" data-arr="entradas" data-i="${i}" data-f="valor"></td>
@@ -1204,7 +1238,7 @@ function renderEntradas(){
 function renderCartao(){
   const data = cm().cartao;
   let shown = 0;
-  document.getElementById('cartao-body').innerHTML = data.map((r,i)=>{
+  editavel('cartao-body').innerHTML = data.map((r,i)=>{
     if(!passaFiltro(r)) return '';
     shown++;
     return `
@@ -1222,7 +1256,7 @@ function renderCartao(){
   return {tot, shown, of:data.length};
 }
 function renderBudgets(){
-  document.getElementById('budget-body').innerHTML = state.budgets.map((b,i)=>`
+  editavel('budget-body').innerHTML = state.budgets.map((b,i)=>`
     <tr>
       <td>${catInput(b.categoria,'budgets',i)}</td>
       <td><input type="number" step="1" value="${b.bom||0}" data-arr="budgets" data-i="${i}" data-f="bom"></td>
@@ -1776,23 +1810,83 @@ async function callClaude(messagesContent){
   return JSON.parse(clean);
 }
 
+/* --- Cruzamento da importação com o que já está lançado no mês --- */
+const RE_PARC = /\bparc(?:ela)?\.?\s*(\d{1,3})\s*(?:\/|de)\s*(\d{1,3})\b/i;
+function normParcelas(txt){
+  const m = String(txt||'').match(/(\d{1,3})\s*(?:\/|de)\s*(\d{1,3})/i);
+  if(!m) return '';
+  const a=+m[1], b=+m[2];
+  return (a>=1 && b>=a && b>1) ? a+'/'+b : '';
+}
+const _STOP = new Set(['de','da','do','das','dos','com','pix','pag','pgto','pagto','pagamento','compra','compras','enviado','enviada','recebido','recebida','ted','doc','transf','transferencia','debito','credito','cartao','ltda','eireli','www','parc','parcela','fatura','loja','online','int']);
+function _norm(s){
+  return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(RE_PARC,' ').replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();
+}
+function _tokens(s){ return _norm(s).split(' ').filter(w=>w.length>=3 && !_STOP.has(w) && !/^\d+$/.test(w)); }
+function nomesParecidos(a,b){
+  const na=_norm(a), nb=_norm(b);
+  if(!na || !nb) return false;
+  if(na===nb) return true;
+  const fa=matchFornecedor(a), fb=matchFornecedor(b);
+  if(fa && fa===fb) return true;
+  const ta=_tokens(a), tb=_tokens(b);
+  return ta.some(x=>tb.some(y=> x===y || (x.length>=4 && y.length>=4 && (x.startsWith(y)||y.startsWith(x)))));
+}
+const _ONDE = {cartao:'Cartão', fixos:'Fixos', gastos:'Gastos', entradas:'Entradas'};
+function acharJaLancado(it, usados){
+  const c = cm();
+  const arrs = it.destino==='entradas' ? ['entradas'] : ['cartao','fixos','gastos'];
+  const pI = parseParcelas(it.parcelas);
+  let fraco = null;
+  for(const arr of arrs){
+    const lista = c[arr]||[];
+    for(let idx=0; idx<lista.length; idx++){
+      const r = lista[idx], key = arr+':'+idx;
+      if(usados.has(key)) continue;
+      if(Math.abs((parseFloat(r.valor)||0) - it.valor) > 0.02) continue;
+      const pR = parseParcelas(r.parcelas);
+      const mesmaParcela = pI && pR && pI.a===pR.a && pI.b===pR.b;
+      const info = {key, onde:_ONDE[arr], nome:r.nome||'(sem nome)', parcelas:r.parcelas||''};
+      if(mesmaParcela || nomesParecidos(it.nome, r.nome)) return {...info, nivel:'forte'};
+      if(!fraco) fraco = {...info, nivel:'fraco'};
+    }
+  }
+  return fraco;
+}
+
 function addPendingItems(items, destinoPadrao){
+  const usados = new Set(pendingItems.filter(p=>p.dup && p.dup.nivel==='forte').map(p=>p.dup.key));
   items.forEach(it=>{
-    const match = matchFornecedor(it.nome);
+    // parcelamento: vem da IA ou de "PARC 03/10" no nome
+    let nome = String(it.nome||'').trim();
+    let parcelas = normParcelas(it.parcelas);
+    const mp = nome.match(RE_PARC);
+    if(mp){ if(!parcelas) parcelas = normParcelas(mp[1]+'/'+mp[2]); nome = nome.replace(RE_PARC,'').replace(/\s{2,}/g,' ').trim(); }
+
+    const match = matchFornecedor(nome);
     if(match){
       match.usos = (match.usos||0) + 1;
       it.categoria = it.categoria || match.categoria;
       it.tipo = match.tipo || it.tipo;
       it.destino = match.destino || destinoPadrao;
     }
-    pendingItems.push({
-      nome: it.nome || 'Lançamento',
-      tipo: (it.tipo==='Crédito') ? 'Crédito' : 'Débito',
+    const entrada = it.tipo==='Entrada';
+    const novo = {
+      nome: nome || 'Lançamento',
+      tipo: (it.tipo==='Crédito' || (parcelas && !entrada)) ? 'Crédito' : 'Débito',
       categoria: it.categoria || '',
       valor: Math.abs(parseFloat(it.valor)) || 0,
-      destino: it.tipo==='Entrada' ? 'entradas' : (it.destino || destinoPadrao),
+      parcelas: entrada ? '' : parcelas,
+      destino: entrada ? 'entradas' : (parcelas && !(match && match.destino) ? 'cartao' : (it.destino || destinoPadrao)),
       selected: true
-    });
+    };
+    const dup = acharJaLancado(novo, usados);
+    if(dup){
+      novo.dup = dup;
+      if(dup.nivel==='forte'){ novo.selected = false; usados.add(dup.key); }
+    }
+    pendingItems.push(novo);
   });
   saveState();
   renderReview();
@@ -1803,10 +1897,12 @@ function renderReview(){
   if(pendingItems.length===0){ panel.style.display='none'; return; }
   panel.style.display='block';
   const cats = categoriasDisponiveis();
-  document.getElementById('review-body').innerHTML = pendingItems.map((it,i)=>`
+  editavel('review-body').innerHTML = pendingItems.map((it,i)=>`
     <tr>
       <td><input type="checkbox" ${it.selected?'checked':''} data-p="${i}" data-pf="selected"></td>
-      <td><input type="text" value="${it.nome}" data-p="${i}" data-pf="nome"></td>
+      <td><input type="text" value="${escAttr(it.nome)}" data-p="${i}" data-pf="nome">${it.dup ? `
+        <div class="dup-tag ${it.dup.nivel}">${it.dup.nivel==='forte' ? '✓ já lançado' : '⚠ mesmo valor'} em ${it.dup.onde}: ${escAttr(it.dup.nome)}${it.dup.parcelas ? ' ('+escAttr(it.dup.parcelas)+')' : ''}${it.dup.nivel==='forte' ? ' — desmarcado' : ' — confira'}</div>` : ''}</td>
+      <td><input type="text" value="${escAttr(it.parcelas||'')}" data-p="${i}" data-pf="parcelas" placeholder="—" style="width:48px"></td>
       <td>
         <select data-p="${i}" data-pf="tipo">
           <option value="Débito" ${it.tipo==='Débito'?'selected':''}>Débito</option>
@@ -1829,8 +1925,11 @@ function renderReview(){
         </select>
       </td>
     </tr>`).join('');
-  document.getElementById('review-count').textContent = pendingItems.filter(p=>p.selected).length + ' de ' + pendingItems.length + ' selecionados';
+  const nDup = pendingItems.filter(p=>p.dup && p.dup.nivel==='forte').length;
+  document.getElementById('review-count').textContent = pendingItems.filter(p=>p.selected).length + ' de ' + pendingItems.length + ' selecionados'
+    + (nDup ? ` · ${nDup} já ${nDup>1?'estavam lançados':'estava lançado'} no mês` : '');
 }
+function escAttr(s){ return String(s??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 document.addEventListener('input', e=>{
   const t = e.target;
@@ -1843,850 +1942,4 @@ document.addEventListener('input', e=>{
 });
 
 document.getElementById('btn-confirmar-import').addEventListener('click', ()=>{
-  const selecionados = pendingItems.filter(p=>p.selected);
-  const c = cm();
-  selecionados.forEach(it=>{
-    if(it.destino==='entradas'){
-      c.entradas.push({nome:it.nome, valor:it.valor});
-    } else if(it.destino==='fixos'){
-      c.fixos.push({nome:it.nome, pago:false, tipo:it.tipo, categoria:it.categoria, valor:it.valor});
-    } else if(it.destino==='cartao'){
-      c.cartao.push({nome:it.nome, parcelas:'', pago:false, tipo:it.tipo, categoria:it.categoria, valor:it.valor});
-    } else {
-      c.gastos.push({nome:it.nome, tipo:it.tipo, categoria:it.categoria, valor:it.valor});
-    }
-  });
-  pendingItems = pendingItems.filter(p=>!p.selected);
-  saveState();
-  renderAll();
-  renderReview();
-  document.getElementById('extrato-status').textContent = selecionados.length + ` lançamento(s) adicionados ao mês "${state.currentMonth}".`;
-  document.getElementById('extrato-status').className = 'import-status';
-});
-
-/* --- Extrato --- */
-document.getElementById('btn-analisar-extrato').addEventListener('click', async ()=>{
-  const raw = document.getElementById('extrato-input').value.trim();
-  const statusEl = document.getElementById('extrato-status');
-  if(!raw){ statusEl.textContent='Cole o extrato antes de analisar.'; statusEl.className='import-status err'; return; }
-  const btn = document.getElementById('btn-analisar-extrato');
-  btn.disabled = true;
-  statusEl.className='import-status';
-  statusEl.innerHTML = '<span class="spinner" style="border-color:#2C4A7555;border-top-color:#2C4A75"></span> analisando extrato...';
-  try{
-    const cats = categoriasDisponiveis().join(', ');
-    const prompt = `Você é um parser de extratos bancários brasileiros. Analise as linhas abaixo e retorne APENAS um array JSON (sem markdown, sem texto extra), no formato:
-[{"nome":"nome do estabelecimento ou origem, curto","tipo":"Débito" ou "Crédito" ou "Entrada","categoria":"uma destas categorias: ${cats} (ou deixe vazio se não tiver certeza)","valor":123.45}]
-Regras: valores negativos ou de saída são "Débito" ou "Crédito" (crédito se mencionar cartão de crédito, fatura ou parcelamento); valores positivos de recebimento (salário, pix recebido, depósito) são "Entrada". Ignore linhas de saldo. valor sempre positivo (número).
-
-Extrato:
-${raw}`;
-    const items = await callClaude(prompt);
-    if(!Array.isArray(items) || items.length===0){
-      statusEl.textContent = 'Não consegui identificar lançamentos nesse texto.';
-      statusEl.className='import-status err';
-    } else {
-      addPendingItems(items, 'gastos');
-      statusEl.textContent = items.length + ' lançamento(s) encontrados — revise abaixo antes de adicionar.';
-    }
-  }catch(err){
-    console.error(err);
-    statusEl.textContent = 'Erro ao analisar o extrato. Tente novamente.';
-    statusEl.className='import-status err';
-  }finally{
-    btn.disabled = false;
-  }
-});
-
-/* --- Fotos de comprovantes --- */
-document.getElementById('foto-input').addEventListener('change', e=>{
-  fotoFiles = Array.from(e.target.files || []);
-  const thumbRow = document.getElementById('thumb-row');
-  thumbRow.innerHTML = '';
-  fotoFiles.forEach(f=>{
-    const url = URL.createObjectURL(f);
-    const img = document.createElement('img');
-    img.src = url;
-    thumbRow.appendChild(img);
-  });
-  document.getElementById('btn-analisar-fotos').disabled = fotoFiles.length===0;
-});
-
-function fileToBase64(file){
-  return new Promise((resolve, reject)=>{
-    const r = new FileReader();
-    r.onload = () => resolve(r.result.split(',')[1]);
-    r.onerror = () => reject(new Error('Falha ao ler arquivo'));
-    r.readAsDataURL(file);
-  });
-}
-
-document.getElementById('btn-analisar-fotos').addEventListener('click', async ()=>{
-  const statusEl = document.getElementById('foto-status');
-  const btn = document.getElementById('btn-analisar-fotos');
-  if(fotoFiles.length===0) return;
-  btn.disabled = true;
-  const cats = categoriasDisponiveis().join(', ');
-  let okCount = 0, failCount = 0;
-  for(let idx=0; idx<fotoFiles.length; idx++){
-    statusEl.className='import-status';
-    statusEl.innerHTML = `<span class="spinner" style="border-color:#2C4A7555;border-top-color:#2C4A75"></span> lendo comprovante ${idx+1} de ${fotoFiles.length}...`;
-    try{
-      const file = fotoFiles[idx];
-      const base64 = await fileToBase64(file);
-      const mediaType = file.type || 'image/jpeg';
-      const prompt = `Esta imagem é um comprovante, recibo ou nota fiscal. Extraia os dados e retorne APENAS um array JSON (sem markdown, sem texto extra) com um único item, no formato:
-[{"nome":"nome do estabelecimento","tipo":"Débito" ou "Crédito","categoria":"uma destas categorias: ${cats} (ou vazio se não tiver certeza)","valor":123.45}]
-Use o valor TOTAL pago no comprovante. Se não identificar tipo de pagamento, use "Débito".`;
-      const content = [
-        {type:'image', source:{type:'base64', media_type: mediaType, data: base64}},
-        {type:'text', text: prompt}
-      ];
-      const items = await callClaude(content);
-      if(Array.isArray(items) && items.length>0){
-        addPendingItems(items, 'gastos');
-        okCount++;
-      } else {
-        failCount++;
-      }
-    }catch(err){
-      console.error(err);
-      failCount++;
-    }
-  }
-  statusEl.textContent = `${okCount} comprovante(s) lido(s)` + (failCount ? `, ${failCount} com falha.` : '.') + ' Revise abaixo antes de adicionar.';
-  statusEl.className = failCount && !okCount ? 'import-status err' : 'import-status';
-  btn.disabled = false;
-  fotoFiles = [];
-  document.getElementById('thumb-row').innerHTML = '';
-  document.getElementById('foto-input').value = '';
-  document.getElementById('btn-analisar-fotos').disabled = true;
-});
-
-/* =================== BASE DE DADOS DE FORNECEDORES =================== */
-
-const EXEMPLOS_FORN = [
-  {nome:'Uber', apelido:'UBER*', categoria:'Uber', tipo:'Crédito', destino:'gastos', obs:'', usos:0},
-  {nome:'iFood', apelido:'IFOOD*', categoria:'Comida', tipo:'Crédito', destino:'gastos', obs:'delivery', usos:0},
-  {nome:'Streaming (Netflix/Spotify)', apelido:'NETFLIX, SPOTIFY', categoria:'Contas', tipo:'Crédito', destino:'fixos', obs:'assinaturas', usos:0},
-  {nome:'Apple', apelido:'APPLE.COM/BILL', categoria:'Contas', tipo:'Crédito', destino:'fixos', obs:'', usos:0},
-  {nome:'Farmácia', apelido:'DROGASIL, DROGARIA', categoria:'Variáveis', tipo:'Débito', destino:'gastos', obs:'', usos:0},
-  {nome:'Supermercado', apelido:'CARREFOUR, EXTRA, PÃO DE AÇÚCAR', categoria:'Comida', tipo:'Débito', destino:'gastos', obs:'', usos:0},
-  {nome:'Posto de combustível', apelido:'SHELL, IPIRANGA, BR', categoria:'Transporte facul/trab', tipo:'Débito', destino:'gastos', obs:'', usos:0},
-  {nome:'Salário', apelido:'FOLHA, SALARIO, PGTO SALARIO', categoria:'', tipo:'Débito', destino:'entradas', obs:'receita', usos:0},
-];
-
-let fornSort = {col:'nome', dir:1};
-let fornFiltro = {texto:'', categoria:'', tipo:''};
-
-function matchFornecedor(nomeExtrato){
-  const nome = (nomeExtrato||'').toLowerCase();
-  for(const f of state.fornecedores){
-    const palavras = (f.apelido||f.nome||'').toLowerCase().split(/[,;]+/).map(s=>s.trim()).filter(Boolean);
-    for(const p of palavras){
-      if(p && nome.includes(p)) return f;
-    }
-    if(nome.includes((f.nome||'').toLowerCase())) return f;
-  }
-  return null;
-}
-
-function renderFornecedores(){
-  const cats = state.budgets.map(b=>b.categoria);
-
-  // populate filter category
-  const catSel = document.getElementById('forn-filtro-cat');
-  const prevCat = catSel.value;
-  catSel.innerHTML = '<option value="">Todas categorias</option>' + cats.map(c=>`<option value="${c}">${c}</option>`).join('');
-  catSel.value = prevCat;
-
-  let rows = state.fornecedores.filter(f=>{
-    if(fornFiltro.categoria && f.categoria!==fornFiltro.categoria) return false;
-    if(fornFiltro.tipo && f.tipo!==fornFiltro.tipo) return false;
-    if(fornFiltro.texto && !(f.nome+f.apelido+f.obs||'').toLowerCase().includes(fornFiltro.texto.toLowerCase())) return false;
-    return true;
-  });
-
-  rows = [...rows].sort((a,b)=>{
-    const av = (a[fornSort.col]||''), bv = (b[fornSort.col]||'');
-    if(typeof av==='number') return (av-bv)*fornSort.dir;
-    return av.toString().localeCompare(bv.toString())*fornSort.dir;
-  });
-
-  document.getElementById('forn-count').textContent = rows.length + ' de ' + state.fornecedores.length + ' fornecedores';
-  document.getElementById('forn-empty').style.display = state.fornecedores.length===0 ? 'block' : 'none';
-
-  const destinos = ['gastos','fixos','cartao','entradas'];
-  const destLabels = {'gastos':'Gastos do mês','fixos':'Fixos','cartao':'Cartão','entradas':'Entradas'};
-
-  document.getElementById('forn-body').innerHTML = rows.map(r=>{
-    const i = state.fornecedores.indexOf(r);
-    return `<tr>
-      <td><input type="text" value="${r.nome||''}" data-fi="${i}" data-ff="nome" placeholder="nome do fornecedor"></td>
-      <td><input type="text" value="${r.apelido||''}" data-fi="${i}" data-ff="apelido" placeholder="ex: UBER*, IFOOD*"></td>
-      <td>
-        <select data-fi="${i}" data-ff="categoria">
-          <option value="">—</option>
-          ${cats.map(c=>`<option value="${c}" ${c===r.categoria?'selected':''}>${c}</option>`).join('')}
-        </select>
-      </td>
-      <td>
-        <select class="tipo-${r.tipo}" data-fi="${i}" data-ff="tipo">
-          <option value="Débito" ${r.tipo==='Débito'?'selected':''}>Débito</option>
-          <option value="Crédito" ${r.tipo==='Crédito'?'selected':''}>Crédito</option>
-        </select>
-      </td>
-      <td>
-        <select data-fi="${i}" data-ff="destino">
-          ${destinos.map(d=>`<option value="${d}" ${d===r.destino?'selected':''}>${destLabels[d]}</option>`).join('')}
-        </select>
-      </td>
-      <td><input type="text" value="${r.obs||''}" data-fi="${i}" data-ff="obs" placeholder="observação..."></td>
-      <td class="num-uso">${r.usos||0}</td>
-      <td><button class="del-btn" data-delforn="${i}">✕</button></td>
-    </tr>`;
-  }).join('');
-
-  // update sort icons
-  ['nome','categoria','tipo','usos'].forEach(col=>{
-    const el = document.getElementById('sort-'+col);
-    if(el) el.textContent = fornSort.col===col ? (fornSort.dir===1?'▲':'▼') : '⇅';
-  });
-}
-
-document.addEventListener('input', e=>{
-  const t = e.target;
-  if(t.dataset && t.dataset.fi !== undefined){
-    const i = +t.dataset.fi, f = t.dataset.ff;
-    if(state.fornecedores[i]) state.fornecedores[i][f] = t.value;
-    saveState();
-    if(f==='tipo') t.className = 'tipo-'+t.value;
-  }
-});
-document.addEventListener('change', e=>{
-  const t = e.target;
-  if(t.dataset && t.dataset.fi !== undefined){
-    const i = +t.dataset.fi, f = t.dataset.ff;
-    if(state.fornecedores[i]) state.fornecedores[i][f] = t.value;
-    saveState();
-    if(f==='tipo') t.className = 'tipo-'+t.value;
-  }
-});
-document.addEventListener('click', e=>{
-  const delForn = e.target.closest('[data-delforn]');
-  if(delForn){
-    state.fornecedores.splice(+delForn.dataset.delforn, 1);
-    saveState(); renderFornecedores(); return;
-  }
-});
-document.getElementById('forn-add-btn').addEventListener('click', ()=>{
-  state.fornecedores.unshift({nome:'', apelido:'', categoria:'', tipo:'Débito', destino:'gastos', obs:'', usos:0});
-  saveState(); renderFornecedores();
-});
-document.getElementById('forn-busca').addEventListener('input', e=>{ fornFiltro.texto=e.target.value; renderFornecedores(); document.getElementById('forn-busca').focus(); });
-document.getElementById('forn-filtro-cat').addEventListener('change', e=>{ fornFiltro.categoria=e.target.value; renderFornecedores(); });
-document.getElementById('forn-filtro-tipo').addEventListener('change', e=>{ fornFiltro.tipo=e.target.value; renderFornecedores(); });
-document.getElementById('forn-limpar').addEventListener('click', ()=>{ fornFiltro={texto:'',categoria:'',tipo:''}; document.getElementById('forn-busca').value=''; document.querySelectorAll('#forn-filtro-cat, #forn-filtro-tipo').forEach(s=>s.value=''); renderFornecedores(); });
-
-document.querySelectorAll('.forn-table th.sortable').forEach(th=>{
-  th.addEventListener('click', ()=>{
-    const col = th.dataset.col;
-    if(fornSort.col===col) fornSort.dir *= -1;
-    else { fornSort.col=col; fornSort.dir=1; }
-    renderFornecedores();
-  });
-});
-
-document.getElementById('forn-popular').addEventListener('click', ()=>{
-  if(!confirm('Adicionar exemplos de fornecedores comuns à base? Não substitui os existentes.')) return;
-  EXEMPLOS_FORN.forEach(ex=>{
-    if(!state.fornecedores.find(f=>f.nome===ex.nome)){
-      state.fornecedores.push({...ex});
-    }
-  });
-  saveState(); renderFornecedores();
-});
-
-document.getElementById('forn-exportar').addEventListener('click', ()=>{
-  const rows = [['Nome','Apelido','Categoria','Tipo','Destino','Obs','Usos']];
-  state.fornecedores.forEach(f=>rows.push([f.nome,f.apelido,f.categoria,f.tipo,f.destino,f.obs,f.usos||0]));
-  const csv = rows.map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\n');
-  const a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
-  a.download = 'fornecedores.csv';
-  a.click();
-});
-
-/* =================== INVESTIMENTOS =================== */
-
-const INV_TIPOS = ['Renda Fixa','FII','Ação','Tesouro','Fundo','Cripto','Poupança','Outro'];
-const INV_TIPOS_CORES = {
-  'Renda Fixa':'#3B82B0','FII':'#3E9B5C','Ação':'#E08A2E','Tesouro':'#2C4A75',
-  'Fundo':'#B05FCB','Cripto':'#7A4FC4','Poupança':'#4FAE72','Outro':'#9CA0AA'
-};
-const INV_TX_TIPOS = ['Aporte','Resgate','Compra','Venda','Rendimento','Transferência'];
-let invTxFiltro = {busca:'', tipo:''};
-
-function invTipoPill(tipo){
-  const cor = INV_TIPOS_CORES[tipo]||'#9CA0AA';
-  return `<span class="tipo-pill" style="background:${cor}22;color:${cor};">${tipo||'—'}</span>`;
-}
-function fmtPct(v){
-  const cls = v>0?'rentab-pos':v<0?'rentab-neg':'rentab-neu';
-  return `<span class="${cls}">${v>0?'+':''}${v.toFixed(2)}%</span>`;
-}
-
-function calcAtivoRentab(a){
-  const custo = (num(a.cotas)||1) * num(a.precoMedio);
-  const atual = num(a.valorAtual);
-  const rendR = atual - custo;
-  const rendPct = custo > 0 ? (rendR/custo)*100 : 0;
-  return {custo, atual, rendR, rendPct};
-}
-
-function renderInvestimentos(){
-  // --- KPIs ---
-  let totalAtual=0, totalCusto=0, aportesMs=0, resgatesMs=0;
-  state.carteira.filter(a=>a.status!=='Resgatado').forEach(a=>{
-    const {custo,atual} = calcAtivoRentab(a);
-    totalAtual += num(a.valorAtual);
-    totalCusto += custo;
-  });
-  const mesAtual = state.currentMonth.toLowerCase();
-  state.transacoes.forEach(tx=>{
-    const d = tx.data||''; const mesNome = new Date(d).toLocaleString('pt-BR',{month:'long'});
-    if(mesNome.toLowerCase()===mesAtual || state.currentMonth==='Setembro'){
-      if(tx.tipo==='Aporte'||tx.tipo==='Compra') aportesMs += num(tx.valorTotal);
-      if(tx.tipo==='Resgate'||tx.tipo==='Venda') resgatesMs += num(tx.valorTotal);
-    }
-  });
-  const rendTotal = totalAtual - totalCusto;
-  const rendPct = totalCusto>0 ? (rendTotal/totalCusto)*100 : 0;
-
-  document.getElementById('inv-k-patrimonio').textContent = fmt(totalAtual);
-  document.getElementById('inv-k-patrimonio').style.color = 'var(--good)';
-  document.getElementById('inv-k-aplicado').textContent = fmt(totalCusto);
-  document.getElementById('inv-k-rend').textContent = fmt(rendTotal);
-  document.getElementById('inv-k-rend').style.color = rendTotal>=0?'var(--good)':'var(--bad)';
-  const rendSub = document.getElementById('inv-k-rend-sub');
-  rendSub.textContent = (rendPct>=0?'+':'')+rendPct.toFixed(2)+'% sobre aplicado';
-  rendSub.className = 'sub '+(rendPct>=0?'good':'bad');
-  document.getElementById('inv-k-aportes').textContent = fmt(aportesMs);
-  document.getElementById('inv-k-resgates').textContent = fmt(resgatesMs);
-  document.getElementById('inv-k-resgates').style.color = resgatesMs>0?'var(--bad)':'var(--text)';
-
-  // --- Carteira de ativos ---
-  const ativos = state.carteira;
-  let sumAtual=0;
-  document.getElementById('inv-ativos-body').innerHTML = ativos.map((a,i)=>{
-    const {custo,atual,rendR,rendPct} = calcAtivoRentab(a);
-    sumAtual += num(a.valorAtual);
-    return `<tr>
-      <td><input type="text" value="${a.nome||''}" data-inv="carteira" data-i="${i}" data-f="nome" placeholder="nome do ativo"></td>
-      <td>
-        <select data-inv="carteira" data-i="${i}" data-f="tipo">
-          ${INV_TIPOS.map(t=>`<option value="${t}" ${t===a.tipo?'selected':''}>${t}</option>`).join('')}
-        </select>
-      </td>
-      <td><input type="text" value="${a.custodiante||''}" data-inv="carteira" data-i="${i}" data-f="custodiante" placeholder="corretora"></td>
-      <td class="num"><input type="number" step="0.000001" value="${a.cotas||0}" data-inv="carteira" data-i="${i}" data-f="cotas"></td>
-      <td class="num"><input type="number" step="0.01" value="${a.precoMedio||0}" data-inv="carteira" data-i="${i}" data-f="precoMedio"></td>
-      <td class="num"><input type="number" step="0.01" value="${a.valorAtual||0}" data-inv="carteira" data-i="${i}" data-f="valorAtual"></td>
-      <td class="num">${fmtPct(rendPct)}<br><span style="font-size:9.5px;color:var(--muted);">${fmt(rendR)}</span></td>
-      <td><button class="del-btn" data-delinv="carteira" data-i="${i}">✕</button></td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:20px;">Nenhum ativo cadastrado — clique em <strong>+ adicionar ativo</strong></td></tr>';
-
-  const totalRendPct = totalCusto>0?((totalAtual-totalCusto)/totalCusto)*100:0;
-  document.getElementById('inv-total-atual').textContent = fmt(sumAtual);
-  document.getElementById('inv-total-rentab').innerHTML = fmtPct(totalRendPct);
-
-  // --- Alocação ---
-  const total = state.carteira.reduce((s,a)=>s+num(a.valorAtual),0)||1;
-  document.getElementById('inv-alloc').innerHTML = state.carteira.length===0
-    ? '<p style="color:var(--muted);font-size:11px;text-align:center;padding:12px 0;">sem ativos</p>'
-    : [...state.carteira].sort((a,b)=>num(b.valorAtual)-num(a.valorAtual)).map(a=>{
-        const pct = (num(a.valorAtual)/total)*100;
-        const cor = INV_TIPOS_CORES[a.tipo]||'#9CA0AA';
-        return `<div class="alloc-row">
-          <div class="aname" title="${a.nome}">${a.nome||'—'}</div>
-          <div class="alloc-track"><div class="alloc-fill" style="width:${pct}%;background:${cor};"></div></div>
-          <div class="apct">${pct.toFixed(1)}%</div>
-          <div class="aval">${fmt(num(a.valorAtual))}</div>
-        </div>`;
-      }).join('');
-
-  // --- Pie por tipo ---
-  const tipoMap={};
-  state.carteira.forEach(a=>{ tipoMap[a.tipo||'Outro']=(tipoMap[a.tipo||'Outro']||0)+num(a.valorAtual); });
-  const tipoEntries = Object.entries(tipoMap).sort((a,b)=>b[1]-a[1]);
-  const totTipo = tipoEntries.reduce((s,[,v])=>s+v,0)||1;
-  let pAcc=0;
-  const pStops = tipoEntries.map(([t,v])=>{
-    const s=pAcc/totTipo*360; pAcc+=v; const e=pAcc/totTipo*360;
-    return `${INV_TIPOS_CORES[t]||'#9CA0AA'} ${s}deg ${e}deg`;
-  }).join(',');
-  document.getElementById('inv-pie').style.background = tipoEntries.length?`conic-gradient(${pStops})`:'#EEF0F3';
-  document.getElementById('inv-pie-legend').innerHTML = tipoEntries.map(([t,v])=>`
-    <div style="display:flex;align-items:center;gap:7px;">
-      <span style="width:9px;height:9px;border-radius:2px;background:${INV_TIPOS_CORES[t]||'#9CA0AA'};flex-shrink:0;"></span>
-      <span style="flex:1;font-weight:600;">${t}</span>
-      <span style="color:var(--muted)">${(v/totTipo*100).toFixed(0)}%</span>
-      <span style="font-weight:700;min-width:72px;text-align:right;">${fmt(v)}</span>
-    </div>`).join('');
-
-  // --- Transações ---
-  let txList = state.transacoes.filter(tx=>{
-    if(invTxFiltro.tipo && tx.tipo!==invTxFiltro.tipo) return false;
-    if(invTxFiltro.busca && !(tx.ativo+tx.obs).toLowerCase().includes(invTxFiltro.busca.toLowerCase())) return false;
-    return true;
-  }).sort((a,b)=>b.data.localeCompare(a.data));
-
-  const ativoNomes = state.carteira.map(a=>a.nome);
-  document.getElementById('inv-tx-body').innerHTML = txList.map((tx,idx)=>{
-    const i = state.transacoes.indexOf(tx);
-    const cor = {'Aporte':'var(--good)','Compra':'var(--good)','Resgate':'var(--bad)','Venda':'var(--bad)','Rendimento':'#B8901F','Transferência':'var(--muted)'}[tx.tipo]||'var(--text)';
-    return `<tr>
-      <td><input type="date" value="${tx.data||''}" data-inv="transacoes" data-i="${i}" data-f="data" style="width:120px;"></td>
-      <td>
-        <select data-inv="transacoes" data-i="${i}" data-f="ativo">
-          <option value="">—</option>
-          ${ativoNomes.map(n=>`<option value="${n}" ${n===tx.ativo?'selected':''}>${n}</option>`).join('')}
-          <option value="Outro" ${!ativoNomes.includes(tx.ativo)?'selected':''}>Outro</option>
-        </select>
-      </td>
-      <td>
-        <select data-inv="transacoes" data-i="${i}" data-f="tipo">
-          ${INV_TX_TIPOS.map(t=>`<option value="${t}" ${t===tx.tipo?'selected':''}>${t}</option>`).join('')}
-        </select>
-      </td>
-      <td class="num"><input type="number" step="0.000001" value="${tx.cotas||0}" data-inv="transacoes" data-i="${i}" data-f="cotas"></td>
-      <td class="num"><input type="number" step="0.01" value="${tx.valorUnit||0}" data-inv="transacoes" data-i="${i}" data-f="valorUnit"></td>
-      <td class="num" style="color:${cor};font-weight:700;">${fmt(num(tx.valorTotal))}</td>
-      <td><input type="text" value="${tx.obs||''}" data-inv="transacoes" data-i="${i}" data-f="obs" placeholder="observação..."></td>
-      <td><button class="del-btn" data-delinv="transacoes" data-i="${i}">✕</button></td>
-    </tr>`;
-  }).join('');
-  document.getElementById('inv-tx-empty').style.display = txList.length===0?'block':'none';
-}
-
-// --- Inv input/change ---
-document.addEventListener('input', e=>{
-  const t=e.target;
-  if(t.dataset && t.dataset.inv){
-    const arr=t.dataset.inv, i=+t.dataset.i, f=t.dataset.f;
-    if(state[arr]&&state[arr][i]!=null){ state[arr][i][f]=t.type==='number'?parseFloat(t.value)||0:t.value; saveState(); renderInvestimentos(); }
-  }
-});
-document.addEventListener('change', e=>{
-  const t=e.target;
-  if(t.dataset && t.dataset.inv){
-    const arr=t.dataset.inv, i=+t.dataset.i, f=t.dataset.f;
-    if(state[arr]&&state[arr][i]!=null){ state[arr][i][f]=t.value; saveState(); renderInvestimentos(); }
-  }
-});
-document.addEventListener('click', e=>{
-  const d=e.target.closest('[data-delinv]');
-  if(d){ state[d.dataset.delinv].splice(+d.dataset.i,1); saveState(); renderInvestimentos(); return; }
-  const a=e.target.closest('[data-addinv]');
-  if(a){
-    if(a.dataset.addinv==='ativo'){
-      state.carteira.push({nome:'', tipo:'Renda Fixa', custodiante:'', cotas:0, precoMedio:0, valorAtual:0, liquidez:'D+1', status:'Ativo', obs:''});
-    } else {
-      state.transacoes.unshift({data:new Date().toISOString().slice(0,10), ativo:'', tipo:'Aporte', cotas:0, valorUnit:0, valorTotal:0, obs:''});
-    }
-    saveState(); renderInvestimentos();
-  }
-});
-document.getElementById('inv-tx-busca').addEventListener('input', e=>{ invTxFiltro.busca=e.target.value; renderInvestimentos(); });
-document.getElementById('inv-tx-tipo-filtro').addEventListener('change', e=>{ invTxFiltro.tipo=e.target.value; renderInvestimentos(); });
-
-// auto-calc valorTotal when cotas or valorUnit change
-document.addEventListener('input', e=>{
-  const t=e.target;
-  if(t.dataset&&t.dataset.inv==='transacoes'&&(t.dataset.f==='cotas'||t.dataset.f==='valorUnit')){
-    const i=+t.dataset.i, tx=state.transacoes[i];
-    if(tx){ tx.valorTotal=num(tx.cotas)*num(tx.valorUnit); saveState(); renderInvestimentos(); }
-  }
-});
-
-/* =================== PARCELAS PROVISIONADAS =================== */
-const MESES_NOMES=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-function parseParcelas(txt){
-  const m=String(txt||'').match(/^\s*(\d+)\s*\/\s*(\d+)\s*$/);
-  if(!m) return null;
-  const a=+m[1], b=+m[2];
-  if(a<1||b<a) return null;
-  return {a,b};
-}
-function novoId(){ return 'c'+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
-function criarProximoMes(){
-  const last = state.monthOrder[state.monthOrder.length-1];
-  const base = last.replace(/\s*\(\d+\)$/,'').toLowerCase();
-  const idx = MESES_NOMES.findIndex(x=>x.toLowerCase()===base);
-  let nome = idx>=0 ? MESES_NOMES[(idx+1)%12] : 'Mês '+(state.monthOrder.length+1);
-  const b0 = nome; let n=2;
-  while(state.months[nome]) nome = b0+' ('+(n++)+')';
-  const novo = defaultMonthData();
-  novo.fixos = (state.months[last].fixos||[]).map(f=>({...f, pago:false}));
-  state.months[nome] = novo;
-  state.monthOrder.push(nome);
-}
-function provisionarParcelas(){
-  let changed=false;
-  if(!state.parcelasIgnoradas) state.parcelasIgnoradas=[];
-  state.monthOrder.forEach(m=>{
-    const arr = state.months[m].cartao || (state.months[m].cartao=[]);
-    arr.forEach(r=>{ if(!r.id){ r.id=novoId(); changed=true; } });
-  });
-  const sources=[], srcMap={};
-  state.monthOrder.forEach((m,mi)=>{
-    state.months[m].cartao.forEach(r=>{
-      if(r.auto) return;
-      const p=parseParcelas(r.parcelas);
-      if(p){ const s={r,mi,a:p.a,rest:Math.min(p.b-p.a,48),b:p.b}; sources.push(s); srcMap[r.id]=s; }
-    });
-  });
-  // remove órfãs / fora do intervalo
-  state.monthOrder.forEach(m=>{
-    const arr=state.months[m].cartao;
-    for(let i=arr.length-1;i>=0;i--){
-      const r=arr[i];
-      if(r.auto){
-        const s=srcMap[r.origemId];
-        if(!s || r.k>s.rest){ arr.splice(i,1); changed=true; }
-      }
-    }
-  });
-  // cria / sincroniza
-  sources.forEach(s=>{
-    for(let k=1;k<=s.rest;k++){
-      if(state.parcelasIgnoradas.includes(s.r.id+':'+k)) continue;
-      const t=s.mi+k;
-      while(state.monthOrder.length<=t){ criarProximoMes(); changed=true; }
-      const arr=state.months[state.monthOrder[t]].cartao;
-      const label=(s.a+k)+'/'+s.b;
-      const row=arr.find(r=>r.auto && r.origemId===s.r.id && r.k===k);
-      if(!row){
-        arr.push({id:novoId(), auto:true, origemId:s.r.id, k, nome:s.r.nome, parcelas:label, tipo:s.r.tipo, categoria:s.r.categoria, valor:s.r.valor});
-        changed=true;
-      } else if(!row.editado){
-        ['nome','tipo','categoria','valor'].forEach(f=>{ if(row[f]!==s.r[f]){ row[f]=s.r[f]; changed=true; } });
-        if(row.parcelas!==label){ row.parcelas=label; changed=true; }
-      }
-    }
-  });
-  return changed;
-}
-
-/* =================== INCLUIR LANÇAMENTO (modal) =================== */
-let lancDest='gastos';
-function toast(msg){
-  const t=document.getElementById('toast');
-  t.textContent=msg; t.classList.add('show');
-  clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('show'),2800);
-}
-function lancSetDest(d){
-  lancDest=d;
-  document.querySelectorAll('#lanc-dest button').forEach(b=>b.classList.toggle('on', b.dataset.d===d));
-  const ent = d==='entradas';
-  document.getElementById('lanc-tipo-wrap').style.display = ent?'none':'';
-  document.getElementById('lanc-cat-wrap').style.display = ent?'none':'';
-  document.getElementById('lanc-parc-wrap').style.display = d==='cartao'?'flex':'none';
-  document.getElementById('lanc-valor-lbl').textContent = d==='cartao' ? 'Valor da parcela' : 'Valor';
-  if(d==='cartao') document.getElementById('lanc-tipo').value='Crédito';
-}
-function lancLimpar(){
-  ['lanc-nome','lanc-valor','lanc-cat','lanc-parc-total'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('lanc-parc-atual').value=1;
-  document.getElementById('lanc-erro').textContent='';
-}
-function abrirLanc(){
-  document.getElementById('lanc-mes').innerHTML = state.monthOrder.map(m=>`<option value="${m}" ${m===state.currentMonth?'selected':''}>${m}</option>`).join('');
-  document.getElementById('lanc-cats').innerHTML = state.budgets.map(b=>`<option value="${b.categoria}">`).join('');
-  lancLimpar(); lancSetDest('gastos');
-  document.getElementById('lanc-tipo').value='Débito';
-  document.getElementById('lanc-modal').style.display='flex';
-  setTimeout(()=>document.getElementById('lanc-nome').focus(),50);
-}
-function fecharLanc(){ document.getElementById('lanc-modal').style.display='none'; }
-function salvarLanc(manter){
-  const nome=document.getElementById('lanc-nome').value.trim();
-  const valor=parseFloat(document.getElementById('lanc-valor').value);
-  const mes=document.getElementById('lanc-mes').value;
-  const erro=document.getElementById('lanc-erro');
-  if(!nome){ erro.textContent='Informe o nome do lançamento.'; return; }
-  if(isNaN(valor) || valor<=0){ erro.textContent='Informe um valor maior que zero.'; return; }
-  const tipo=document.getElementById('lanc-tipo').value;
-  const categoria=document.getElementById('lanc-cat').value.trim();
-  let row;
-  if(lancDest==='entradas') row={nome, valor};
-  else if(lancDest==='fixos') row={nome, pago:false, tipo, categoria, valor};
-  else if(lancDest==='gastos') row={nome, tipo, categoria, valor};
-  else {
-    const atual=parseInt(document.getElementById('lanc-parc-atual').value)||1;
-    const total=parseInt(document.getElementById('lanc-parc-total').value)||1;
-    if(atual>total){ erro.textContent='A parcela atual não pode ser maior que o total.'; return; }
-    row={nome, parcelas: total>1 ? atual+'/'+total : '', tipo, categoria, valor};
-  }
-  state.months[mes][lancDest].push(row);
-  saveState(); renderAll();
-  const destNome={gastos:'Gastos do mês',fixos:'Fixos',cartao:'Cartão de crédito',entradas:'Entradas'}[lancDest];
-  const extra = (lancDest==='cartao' && row.parcelas) ? ' · parcelas futuras provisionadas' : '';
-  toast(`"${nome}" adicionado em ${destNome} — ${mes}${extra}`);
-  if(manter){
-    lancLimpar(); document.getElementById('lanc-nome').focus();
-  } else fecharLanc();
-}
-document.getElementById('btn-incluir').addEventListener('click', abrirLanc);
-document.getElementById('lanc-fechar').addEventListener('click', fecharLanc);
-document.getElementById('lanc-cancelar').addEventListener('click', fecharLanc);
-document.getElementById('lanc-modal').addEventListener('click', e=>{ if(e.target.id==='lanc-modal') fecharLanc(); });
-document.getElementById('lanc-salvar').addEventListener('click', ()=>salvarLanc(false));
-document.getElementById('lanc-salvar-novo').addEventListener('click', ()=>salvarLanc(true));
-document.getElementById('lanc-dest').addEventListener('click', e=>{ const b=e.target.closest('button'); if(b) lancSetDest(b.dataset.d); });
-document.getElementById('lanc-nome').addEventListener('blur', ()=>{
-  if(lancDest==='entradas') return;
-  const m = (typeof matchFornecedor==='function') ? matchFornecedor(document.getElementById('lanc-nome').value) : null;
-  if(m){
-    if(!document.getElementById('lanc-cat').value && m.categoria) document.getElementById('lanc-cat').value=m.categoria;
-    if(lancDest!=='cartao' && m.tipo) document.getElementById('lanc-tipo').value=m.tipo;
-  }
-});
-document.addEventListener('keydown', e=>{
-  const open=document.getElementById('lanc-modal').style.display==='flex';
-  if(!open) return;
-  if(e.key==='Escape') fecharLanc();
-  if(e.key==='Enter' && e.target.tagName!=='BUTTON') salvarLanc(false);
-});
-
-
-
-/* ======================= SENHA DO PAINEL ======================= */
-// >>> TROQUE A SENHA AQUI <<<
-const SENHA_PAINEL = '03690';
-
-const LOCK_KEY = 'contabilidade_pessoal_lembrar';
-function desbloquear(){
-  document.getElementById('lock').style.display = 'none';
-  document.body.classList.remove('travado');
-}
-function bloquear(){
-  try{ localStorage.removeItem(LOCK_KEY); sessionStorage.removeItem(LOCK_KEY); }catch(e){}
-  document.getElementById('lock-senha').value = '';
-  document.getElementById('lock-erro').textContent = '';
-  document.getElementById('lock').style.display = 'flex';
-  document.body.classList.add('travado');
-  setTimeout(()=>document.getElementById('lock-senha').focus(), 50);
-}
-(function iniciarSenha(){
-  // a lembrança só vale enquanto a senha não mudar
-  const marca = 'ok:' + SENHA_PAINEL.length + ':' + [...SENHA_PAINEL].reduce((h,c)=>(h*31+c.charCodeAt(0))|0, 7);
-  let lembrado = false;
-  try{ lembrado = localStorage.getItem(LOCK_KEY)===marca || sessionStorage.getItem(LOCK_KEY)===marca; }catch(e){}
-  if(lembrado) desbloquear();
-  document.getElementById('lock-form').addEventListener('submit', e=>{
-    e.preventDefault();
-    const v = document.getElementById('lock-senha').value;
-    if(v === SENHA_PAINEL){
-      try{
-        sessionStorage.setItem(LOCK_KEY, marca);
-        if(document.getElementById('lock-lembrar').checked) localStorage.setItem(LOCK_KEY, marca);
-      }catch(err){}
-      desbloquear();
-    } else {
-      const lock = document.getElementById('lock');
-      document.getElementById('lock-erro').textContent = 'Senha incorreta.';
-      lock.classList.remove('shake'); void lock.offsetWidth; lock.classList.add('shake');
-      document.getElementById('lock-senha').select();
-    }
-  });
-  document.getElementById('btn-sair').addEventListener('click', bloquear);
-})();
-
-/* ======================= SINCRONIZAÇÃO GOOGLE SHEETS ======================= */
-const SYNC_KEY = 'contabilidade_pessoal_sync';
-// planilha conectada por padrão em qualquer aparelho que abrir o painel
-const SYNC_URL_PADRAO = 'https://script.google.com/macros/s/AKfycbxyiGIyK66_OcmfXckZliyc66jK9Js3WmeXaPDptjTRjOawG3qWfRN4WZidPRIKGxtE/exec';
-let syncCfg = (()=>{
-  try{
-    const salvo = JSON.parse(localStorage.getItem(SYNC_KEY));
-    if(salvo && salvo.desconectado) return {};
-    if(salvo && salvo.url) return { url: salvo.url };   // URL trocada manualmente no ☁ Planilha
-    return { url: SYNC_URL_PADRAO };
-  }catch(e){ return { url: SYNC_URL_PADRAO }; }
-})();
-let syncIniciando = false, syncAplicando = false, syncTimer = null, syncPendente = false, syncEnviando = false;
-
-function syncConectado(){ return !!syncCfg.url; }
-function syncPodeEnviar(){ return syncConectado() && !syncIniciando && !syncAplicando; }
-function horaAgora(){ return new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); }
-
-function setSyncStatus(estado, texto){
-  const b = document.getElementById('btn-sync');
-  b.className = 'btn-sync ' + estado;
-  document.getElementById('sync-st').textContent = texto;
-}
-function syncMsg(texto, cls){
-  const el = document.getElementById('sync-msg');
-  el.textContent = texto||''; el.className = 'sync-status ' + (cls||'');
-}
-
-async function syncGet(acao, cfg){
-  cfg = cfg || syncCfg;
-  const url = cfg.url + (cfg.url.includes('?')?'&':'?') + 'acao=' + acao + '&t=' + Date.now();
-  const r = await fetch(url, {redirect:'follow'});
-  const j = await r.json();
-  if(!j.ok) throw new Error(j.erro || 'erro na planilha');
-  return j;
-}
-
-function aplicarEstadoRemoto(st){
-  syncAplicando = true;
-  try{
-    state = st;
-    if(!state.fornecedores) state.fornecedores = [];
-    if(!state.carteira) state.carteira = [];
-    if(!state.transacoes) state.transacoes = [];
-    if(!state.parcelasIgnoradas) state.parcelasIgnoradas = [];
-    if(!state.budgets) state.budgets = [];
-    provisionarParcelas();
-    irParaMesAtual();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    renderAll();
-  } finally { syncAplicando = false; }
-}
-
-function agendarEnvio(){
-  syncPendente = true;
-  setSyncStatus('saving', 'alterações pendentes');
-  clearTimeout(syncTimer);
-  syncTimer = setTimeout(syncEnviar, 2000);
-}
-
-async function syncEnviar(){
-  if(!syncConectado()) return;
-  clearTimeout(syncTimer);
-  if(syncEnviando){ syncPendente = true; return; }
-  syncEnviando = true; syncPendente = false;
-  let falhou = false;
-  setSyncStatus('saving', 'salvando…');
-  try{
-    if(!state._atualizadoEm) state._atualizadoEm = Date.now();
-    const r = await fetch(syncCfg.url, {
-      method:'POST', redirect:'follow',
-      headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify({acao:'salvar', state})
-    });
-    const j = await r.json();
-    if(j.ok){ setSyncStatus('ok', 'salvo às ' + horaAgora()); }
-    else if(j.desatualizado){
-      const rem = await syncGet('carregar');
-      if(rem.state) aplicarEstadoRemoto(rem.state);
-      setSyncStatus('ok', 'atualizado às ' + horaAgora());
-      toast('A planilha tinha dados mais novos (outro aparelho) — painel atualizado.');
-    }
-    else throw new Error(j.erro || 'erro ao salvar');
-  } catch(e){
-    console.error('sync', e);
-    falhou = true; syncPendente = true;
-    setSyncStatus('err', 'erro ao salvar');
-  } finally {
-    syncEnviando = false;
-    // houve edição durante o envio → manda de novo; se falhou, tenta outra vez em 20s
-    if(syncPendente && syncConectado()) syncTimer = setTimeout(syncEnviar, falhou ? 20000 : 1500);
-  }
-}
-
-// ao abrir: fica com a versão mais nova (planilha ou este navegador)
-async function syncInicial(){
-  if(!syncConectado()){ setSyncStatus('', 'desconectada'); return; }
-  syncIniciando = true;
-  setSyncStatus('saving', 'carregando…');
-  try{
-    const rem = await syncGet('carregar');
-    const local = state._atualizadoEm || 0;
-    if(rem.state && (rem.state._atualizadoEm||0) >= local){
-      syncIniciando = false;
-      aplicarEstadoRemoto(rem.state);
-      setSyncStatus('ok', 'sincronizada');
-    } else {
-      syncIniciando = false;
-      await syncEnviar();
-      if(!rem.state) toast('Planilha vazia — seus dados foram enviados para ela.');
-    }
-  } catch(e){
-    console.error('sync', e);
-    setSyncStatus('err', 'sem conexão');
-  } finally { syncIniciando = false; }
-}
-
-// tenta não perder a última alteração ao fechar a aba
-window.addEventListener('pagehide', ()=>{
-  if(syncPendente && syncConectado() && navigator.sendBeacon){
-    navigator.sendBeacon(syncCfg.url, new Blob([JSON.stringify({acao:'salvar', state})], {type:'text/plain;charset=utf-8'}));
-  }
-});
-
-/* modal */
-function abrirSync(){
-  document.getElementById('sync-url').value = syncCfg.url || SYNC_URL_PADRAO;
-  syncMsg(syncConectado() ? 'Conectada. As alterações são salvas na planilha automaticamente.' : '', syncConectado()?'ok':'');
-  document.getElementById('sync-modal').style.display = 'flex';
-}
-function fecharSync(){ document.getElementById('sync-modal').style.display = 'none'; }
-document.getElementById('btn-sync').addEventListener('click', abrirSync);
-document.getElementById('sync-fechar').addEventListener('click', fecharSync);
-document.getElementById('sync-modal').addEventListener('click', e=>{ if(e.target.id==='sync-modal') fecharSync(); });
-
-document.getElementById('sync-conectar').addEventListener('click', async ()=>{
-  const cfg = { url: document.getElementById('sync-url').value.trim() };
-  if(!/^https:\/\/script\.google(usercontent)?\.com\//.test(cfg.url)){ syncMsg('Cole a URL do App da Web (começa com https://script.google.com/…).','err'); return; }
-  syncMsg('Testando conexão…');
-  try{
-    const j = await syncGet('ping', cfg);
-    syncCfg = cfg; localStorage.setItem(SYNC_KEY, JSON.stringify(syncCfg));
-    syncMsg('Conectada à planilha "' + j.planilha + '". Sincronizando…','ok');
-    await syncInicial();
-    syncMsg('Conectada à planilha "' + j.planilha + '". As alterações são salvas automaticamente.','ok');
-  } catch(e){
-    syncMsg('Não conectou: ' + (e.message||e) + ' — confira a URL e se o acesso está como "Qualquer pessoa".','err');
-  }
-});
-document.getElementById('sync-enviar').addEventListener('click', async ()=>{
-  if(!syncConectado()){ syncMsg('Conecte primeiro.','err'); return; }
-  state._atualizadoEm = Date.now();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  syncMsg('Enviando…');
-  await syncEnviar();
-  const ok = document.getElementById('btn-sync').classList.contains('ok');
-  syncMsg(ok ? 'Dados enviados para a planilha às ' + horaAgora() + '.' : 'Não foi possível enviar agora.', ok?'ok':'err');
-});
-document.getElementById('sync-baixar').addEventListener('click', async ()=>{
-  if(!syncConectado()){ syncMsg('Conecte primeiro.','err'); return; }
-  if(!confirm('Substituir os dados deste navegador pelos da planilha?')) return;
-  syncMsg('Baixando…');
-  try{
-    const rem = await syncGet('carregar');
-    if(!rem.state){ syncMsg('A planilha está vazia.','err'); return; }
-    aplicarEstadoRemoto(rem.state);
-    setSyncStatus('ok', 'sincronizada');
-    syncMsg('Painel atualizado com os dados da planilha.','ok');
-  } catch(e){ syncMsg('Erro: ' + (e.message||e),'err'); }
-});
-document.getElementById('sync-desconectar').addEventListener('click', ()=>{
-  syncCfg = {}; localStorage.setItem(SYNC_KEY, JSON.stringify({desconectado:true}));
-  clearTimeout(syncTimer); syncPendente = false;
-  setSyncStatus('', 'desconectada');
-  syncMsg('Desconectada. Os dados continuam salvos neste navegador e na planilha.');
-});
-
-loadState();
-syncIniciando = syncConectado();   // não envia nada antes de comparar com a planilha
-provisionarParcelas();
-irParaMesAtual();
-renderAll();
-syncInicial();
-</script>
-</body>
-</html>
+  const selecionados = pend
