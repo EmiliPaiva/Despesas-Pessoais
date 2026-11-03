@@ -235,6 +235,7 @@ input.cat-input{font-weight:700; border-radius:4px; padding:2px 6px;}
 .lock.shake .lock-box{animation:shake .35s;}
 @keyframes shake{20%,60%{transform:translateX(-7px);}40%,80%{transform:translateX(7px);}}
 body.travado{overflow:hidden;}
+body.travado > *:not(#lock):not(script):not(style){display:none !important;}
 .btn-sair{align-self:center; margin-bottom:6px; margin-right:8px; background:none; border:none; color:var(--muted); font-family:inherit; font-size:12px; font-weight:700; cursor:pointer;}
 .btn-sair:hover{color:var(--bad);}
 
@@ -459,15 +460,26 @@ tr.row-auto td{background:#F7F3FD;}
 </head>
 <body class="travado">
 
+<!-- ======================= AGUARDANDO PLANILHA ======================= -->
+<div class="lock" id="sync-bloqueio" style="display:none; z-index:99;">
+  <div class="lock-box">
+    <div class="lock-ico">☁</div>
+    <h2>Carregando da planilha</h2>
+    <p>Este visualizador não guarda dados no aparelho, então o painel só libera a edição depois de carregar seus dados da planilha — assim nada é sobrescrito.</p>
+    <div class="lock-erro" id="sync-bloqueio-st" style="color:var(--muted)">carregando…</div>
+    <button class="btn-primary" type="button" id="sync-bloqueio-tentar" style="margin-top:10px">Tentar agora</button>
+  </div>
+</div>
+
 <!-- ======================= TELA DE SENHA ======================= -->
 <div class="lock" id="lock">
   <form class="lock-box" id="lock-form" autocomplete="off">
     <div class="lock-ico">🔒</div>
     <h2>Contabilidade Pessoal</h2>
     <p>Digite a senha para abrir o painel</p>
-    <input type="password" id="lock-senha" placeholder="senha" autofocus>
+    <input type="password" id="lock-senha" placeholder="senha" inputmode="numeric" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" autofocus>
     <label class="lembrar"><input type="checkbox" id="lock-lembrar"> lembrar neste aparelho</label>
-    <button class="btn-primary" type="submit">Entrar</button>
+    <button class="btn-primary" type="button" id="lock-entrar">Entrar</button>
     <div class="lock-erro" id="lock-erro"></div>
   </form>
 </div>
@@ -1159,6 +1171,7 @@ document.addEventListener('focusout', ()=>{
 function saveState(){
   const marcar = typeof syncPodeEnviar==='function' && syncPodeEnviar();
   if(marcar) state._atualizadoEm = Date.now();
+  else if(typeof syncConectado==='function' && syncConectado() && !syncCarregouOk && !syncIniciando && !syncAplicando) state._editadoSemSync = true;
   try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
   catch(e){ console.error('erro ao salvar', e); }
   if(marcar) agendarEnvio();
@@ -1921,25 +1934,4 @@ function renderReview(){
           <option value="gastos" ${it.destino==='gastos'?'selected':''}>Gastos do mês</option>
           <option value="fixos" ${it.destino==='fixos'?'selected':''}>Fixos</option>
           <option value="cartao" ${it.destino==='cartao'?'selected':''}>Cartão</option>
-          <option value="entradas" ${it.destino==='entradas'?'selected':''}>Entradas</option>
-        </select>
-      </td>
-    </tr>`).join('');
-  const nDup = pendingItems.filter(p=>p.dup && p.dup.nivel==='forte').length;
-  document.getElementById('review-count').textContent = pendingItems.filter(p=>p.selected).length + ' de ' + pendingItems.length + ' selecionados'
-    + (nDup ? ` · ${nDup} já ${nDup>1?'estavam lançados':'estava lançado'} no mês` : '');
-}
-function escAttr(s){ return String(s??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
-document.addEventListener('input', e=>{
-  const t = e.target;
-  if(t.dataset && t.dataset.p !== undefined){
-    const i = +t.dataset.p, f = t.dataset.pf;
-    let val = t.type==='checkbox' ? t.checked : (f==='valor' ? parseFloat(t.value)||0 : t.value);
-    pendingItems[i][f] = val;
-    if(f==='selected') renderReview();
-  }
-});
-
-document.getElementById('btn-confirmar-import').addEventListener('click', ()=>{
-  const selecionados = pend
+          <option value="entradas" ${it.destino==='entrad
